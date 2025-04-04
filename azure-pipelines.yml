@@ -1,0 +1,56 @@
+trigger:
+  - master
+
+pool:
+  name: Default
+
+stages:
+  - stage: Build
+    jobs:
+      - job: BuildAndPackage
+        steps:
+          - task: UseNode@1
+            displayName: 'Install Node.js'
+            inputs:
+              version: '18.x'
+
+          - task: npm@1
+            displayName: 'Install Dependencies'
+            inputs:
+              command: 'install'
+
+          - script: |
+              echo "Building Application..."
+              npm run build
+            displayName: 'Build Application'
+
+          - script: |
+              echo "Creating Deployment Package..."
+              mkdir -p codedeploy-artifact
+              cp -R * codedeploy-artifact/
+              zip -r deployment.zip codedeploy-artifact
+            displayName: 'Prepare Deployment Package'
+
+          - task: S3Upload@1
+            displayName: 'Upload to S3'
+            inputs:
+              awsCredentials: 'AWS-CodeDeploy'  # The service connection name
+              regionName: 'us-east-1'  # Change based on your AWS region
+              bucketName: 'my-codedeploy-bucket'
+              sourceFolder: '.'
+              globExpressions: 'deployment.zip'
+              targetFolder: '/'
+              forcePathStyleAddressing: true
+
+  - stage: Deploy
+    jobs:
+      - job: DeployToEC2
+        steps:
+          - task: AWSCodeDeploy@1
+            displayName: 'Deploy to EC2 using CodeDeploy'
+            inputs:
+              awsCredentials: 'AWS-CodeDeploy'
+              regionName: 'us-east-1'
+              applicationName: 'MyCodeDeployApp'
+              deploymentGroupName: 'MyDeploymentGroup'
+              revisionBundle: 's3://my-codedeploy-bucket/deployment.zip'
