@@ -1,56 +1,61 @@
 trigger:
-  - master
+  - main
 
-pool:
-  name: Default
+variables:
+  - group: aws-deploy-variables
 
 stages:
   - stage: Build
     jobs:
-      - job: BuildAndPackage
+      - job: ZipArtifact
+        pool:
+          vmImage: 'ubuntu-latest' 
         steps:
-          - task: UseNode@1
-            displayName: 'Install Node.js'
-            inputs:
-              version: '18.x'
-
-          - task: npm@1
-            displayName: 'Install Dependencies'
-            inputs:
-              command: 'install'
-
           - script: |
-              echo "Building Application..."
-              npm run build
-            displayName: 'Build Application'
+              echo "Zipping application code"
+              zip -r app.zip . -x '*.git*'
+            displayName: 'Zip source code'
 
-          - script: |
-              echo "Creating Deployment Package..."
-              mkdir -p codedeploy-artifact
-              cp -R * codedeploy-artifact/
-              zip -r deployment.zip codedeploy-artifact
-            displayName: 'Prepare Deployment Package'
-
-          - task: S3Upload@1
-            displayName: 'Upload to S3'
+          - task: CopyFiles@2
             inputs:
-              awsCredentials: 'AWS-CodeDeploy'  # The service connection name
-              regionName: 'us-east-1'  # Change based on your AWS region
-              bucketName: 'my-codedeploy-bucket'
-              sourceFolder: '.'
-              globExpressions: 'deployment.zip'
-              targetFolder: '/'
-              forcePathStyleAddressing: true
+              SourceFolder: '$(System.DefaultWorkingDirectory)'
+              Contents: '**/*.zip'
+              TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+          - task: PublishBuildArtifacts@1
+            inputs:
+              pathToPublish: '$(Build.ArtifactStagingDirectory)'
+              artifactName: 'app'
+              publishLocation: 'Container'
 
   - stage: Deploy
+    dependsOn: Build
     jobs:
-      - job: DeployToEC2
+      - job: CodeDeploy
+        pool:
+          name: Default
         steps:
-          - task: AWSCodeDeploy@1
-            displayName: 'Deploy to EC2 using CodeDeploy'
-            inputs:
-              awsCredentials: 'AWS-CodeDeploy'
-              regionName: 'us-east-1'
-              applicationName: 'MyCodeDeployApp'
-              deploymentGroupName: 'MyDeploymentGroup'
-              revisionBundle: 's3://my-codedeploy-bucket/deployment.zip'
+          - download: current
+            artifact: app
+
+          - script: |
+              echo "Setting up AWS CLI"
+              aws configure set aws_access_key_id $(AWS_ACCESS_KEY_ID)
+              aws configure set aws_secret_access_key $(AWS_SECRET_ACCESS_KEY)
+              aws configure set region $(AWS_REGION)
+            displayName: 'Configure AWS CLI'
+
+          - script: |
+              echo "Uploading to S3"
+              aws s3 cp $(Pipeline.Workspace)/app/app.zip s3://$(S3_BUCKET)/app.zip
+            displayName: 'Upload to S3'
+
+          - script: |
+              echo "Triggering CodeDeploy Deployment"
+              aws deploy create-deployment \
+                --application-name $(CODEDEPLOY_APP) \
+                --deployment-group-name $(CODEDEPLOY_GROUP) \
+                --s3-location bucket=$(S3_BUCKET),bundleType=zip,key=app.zip \
+                --file-exists-behavior OVERWRITE \
+                --deployment-config-name CodeDeployDefault.AllAtOnce
+            displayName: 'Trigger Deployment'
