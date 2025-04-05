@@ -33,7 +33,7 @@ stages:
     jobs:
       - job: CodeDeploy
         pool:
-          name: Default
+          vmImage: 'ubuntu-latest'
         steps:
           - download: current
             artifact: app
