@@ -16,17 +16,28 @@ stages:
               zip -r app.zip . -x '*.git*'
             displayName: 'Zip source code'
 
-          - task: CopyFiles@2
+          - task: UseDotNet@2
             inputs:
-              SourceFolder: '$(System.DefaultWorkingDirectory)'
-              Contents: '**/*.zip'
-              TargetFolder: '$(Build.ArtifactStagingDirectory)'
+              packageType: 'sdk'
+              version: '6.0.x' # or whatever version you use
 
-          - task: PublishBuildArtifacts@1
+          - task: DotNetCoreCLI@2
             inputs:
-              pathToPublish: '$(Build.ArtifactStagingDirectory)'
-              artifactName: 'app'
-              publishLocation: 'Container'
+             command: 'restore'
+             projects: '**/*.csproj'
+
+          - task: DotNetCoreCLI@2
+            inputs:
+              command: 'build'
+              projects: '**/*.csproj'
+              arguments: '--configuration Release'
+
+          - task: DotNetCoreCLI@2
+            inputs:
+              command: 'publish'
+              publishWebProjects: true
+              arguments: '--configuration Release --output $(Build.ArtifactStagingDirectory)'
+              zipAfterPublish: true
 
   - stage: Deploy
     dependsOn: Build
